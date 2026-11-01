@@ -1,11 +1,9 @@
-from __future__ import annotations
-
 from pathlib import Path
 
 import bpy
 
 from bpy.types import Operator
-from bpy.props import StringProperty
+from bpy.props import EnumProperty, IntProperty, StringProperty
 from bpy_extras.io_utils import ImportHelper
 
 from .obj_parser import read_obj
@@ -15,7 +13,105 @@ from .json_parser import (
     validate,
 )
 from .hair_builder import build_hair
+from .particle_builder import build_particle_hair
 from .asset_loader import setup_hair
+
+
+def _selected_surface(context):
+    return next(
+        (obj for obj in context.selected_objects if obj.type == "MESH"),
+        None,
+    )
+
+
+def _surface_uv_map(surface: bpy.types.Object) -> str:
+    uv_layers = surface.data.uv_layers
+    if not uv_layers:
+        raise RuntimeError(
+            f"Selected surface '{surface.name}' has no UV map for groom binding."
+        )
+    if uv_layers.active is not None:
+        return uv_layers.active.name
+    for name in ("DiffuseUV", "UVMap"):
+        if name in uv_layers:
+            return name
+    return uv_layers[0].name
+
+
+def _particle_source_from_curves(
+    vertices: list[float],
+    curves: list[dict],
+    name: str,
+    surface: bpy.types.Object,
+    context: bpy.types.Context,
+) -> tuple[list[float], list[dict]]:
+    previous_active = context.view_layer.objects.active
+    previous_selected = list(context.selected_objects)
+    source_object = None
+    source_data = None
+    try:
+        source_object = build_hair(
+            vertices,
+            curves,
+            name=f"{name} Curve Source",
+        )
+        source_data = source_object.data
+        setup_hair(
+            source_object,
+            surface=surface,
+            uv_map=_surface_uv_map(surface),
+        )
+        context.view_layer.update()
+
+        evaluated_data = source_object.evaluated_get(
+            context.evaluated_depsgraph_get()
+        ).data
+        expected_offsets = [0]
+        for curve in curves:
+            expected_offsets.append(expected_offsets[-1] + curve["count"])
+
+        actual_offsets = [0] * len(evaluated_data.curve_offset_data)
+        evaluated_data.curve_offset_data.foreach_get("value", actual_offsets)
+        if (
+            len(evaluated_data.curves) != len(curves)
+            or actual_offsets != expected_offsets
+        ):
+            raise RuntimeError(
+                "The Hair Curves modifier changed the source strand topology; "
+                "particle import cannot preserve strand correspondence."
+            )
+
+        evaluated_vertices = [0.0] * (len(evaluated_data.points) * 3)
+        evaluated_data.position_data.foreach_get(
+            "vector",
+            evaluated_vertices,
+        )
+        sequential_curves = []
+        point_start = 0
+        for curve in curves:
+            sequential_curve = dict(curve)
+            sequential_curve["first"] = point_start
+            sequential_curves.append(sequential_curve)
+            point_start += curve["count"]
+
+        return evaluated_vertices, sequential_curves
+    finally:
+        if source_object is not None:
+            bpy.data.objects.remove(source_object, do_unlink=True)
+        if source_data is not None and source_data.users == 0:
+            bpy.data.hair_curves.remove(source_data)
+
+        for selected_obj in context.selected_objects:
+            selected_obj.select_set(False)
+        for selected_obj in previous_selected:
+            if selected_obj.name in bpy.data.objects:
+                selected_obj.select_set(True)
+        context.view_layer.objects.active = (
+            previous_active
+            if previous_active is not None
+            and previous_active.name in bpy.data.objects
+            else None
+        )
 
 
 class IMPORT_OT_unreal_groom(
@@ -34,6 +130,56 @@ class IMPORT_OT_unreal_groom(
         default="*.obj",
         options={"HIDDEN"},
     )
+
+    import_mode: EnumProperty(
+        name="Import As",
+        items=(
+            ("CURVES", "Hair Curves", "Import native Blender Hair Curves"),
+            ("PARTICLE", "Particle Hair", "Import combable particle hair"),
+        ),
+        default="CURVES",
+    )
+
+    particle_guide_limit: IntProperty(
+        name="Maximum Guide Hairs",
+        description=(
+            "Reduce source strands to this many guides; use the full curve "
+            "count for one guide per strand"
+        ),
+        default=100000,
+        min=1,
+        max=100000,
+    )
+
+    particle_hair_step: IntProperty(
+        name="Hair Segments",
+        description="Segments per guide; higher values preserve more bends but use more memory",
+        default=20,
+        min=2,
+        max=20,
+    )
+
+    particle_children: IntProperty(
+        name="Simple Children per Guide",
+        description=(
+            "Procedural children add density but do not reproduce omitted "
+            "source strands"
+        ),
+        default=0,
+        min=0,
+        max=20,
+    )
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "import_mode")
+        if self.import_mode == "PARTICLE":
+            layout.prop(self, "particle_guide_limit")
+            layout.prop(self, "particle_hair_step")
+            layout.prop(self, "particle_children")
+            layout.label(
+                text="Defaults preserve source strands; lower guides/steps for speed."
+            )
 
     # ----------------------------------------------------------
     # Execute
@@ -70,33 +216,50 @@ class IMPORT_OT_unreal_groom(
             curves = read_json(json_path)
 
             validate(curves)
-            
+
             name = obj_path.stem
 
             #
             # Build hair
             #
+            surface = _selected_surface(context)
+
+            if self.import_mode == "PARTICLE":
+                particle_vertices = vertices
+                particle_curves = curves
+                if surface is not None:
+                    particle_vertices, particle_curves = (
+                        _particle_source_from_curves(
+                            vertices,
+                            curves,
+                            name,
+                            surface,
+                            context,
+                        )
+                    )
+
+                hair_object, imported_guides = build_particle_hair(
+                    particle_vertices,
+                    particle_curves,
+                    name=name,
+                    guide_limit=self.particle_guide_limit,
+                    hair_step=self.particle_hair_step,
+                    children_per_guide=self.particle_children,
+                    context=context,
+                )
+                self.report(
+                    {"INFO"},
+                    f"Imported {imported_guides:,} of {len(curves):,} "
+                    f"particle guides ({self.particle_hair_step} segments, "
+                    f"{self.particle_children} simple children each)",
+                )
+                return {"FINISHED"}
 
             hair_object = build_hair(
                 vertices,
                 curves,
-               name=name,
+                name=name,
             )
-
-            #
-            # Find selected mesh
-            #
-
-            surface = None
-
-            for obj in context.selected_objects:
-
-                if obj == hair_object:
-                    continue
-
-                if obj.type == 'MESH':
-                    surface = obj
-                    break
 
             #
             # Setup assets
@@ -105,7 +268,7 @@ class IMPORT_OT_unreal_groom(
             setup_hair(
                 hair_object,
                 surface=surface,
-                uv_map="UVMap",
+                uv_map=_surface_uv_map(surface) if surface is not None else "UVMap",
             )
 
             #

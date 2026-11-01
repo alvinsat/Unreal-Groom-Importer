@@ -88,6 +88,90 @@ def point_count(curves: list[dict]) -> int:
     return sum(curve["count"] for curve in curves)
 
 
+def curve_point_starts(
+    curves: list[dict],
+    total_points: int,
+) -> list[int]:
+    """Resolve each curve's point start for global or per-group OBJ offsets."""
+    if not curves:
+        raise ValueError("JSON does not contain any curves.")
+    if isinstance(total_points, bool) or not isinstance(total_points, int):
+        raise ValueError("OBJ point count must be an integer.")
+    if total_points < 0:
+        raise ValueError("OBJ point count cannot be negative.")
+
+    groups: dict[int, list[tuple[int, int, int]]] = {}
+    group_order = []
+    for curve_index, curve in enumerate(curves):
+        first = curve["first"]
+        count = curve["count"]
+        group = curve["group"]
+        if (
+            isinstance(first, bool)
+            or not isinstance(first, int)
+            or first < 0
+        ):
+            raise ValueError(f"Curve {curve_index} has an invalid first point.")
+        if (
+            isinstance(count, bool)
+            or not isinstance(count, int)
+            or count < 1
+        ):
+            raise ValueError(f"Curve {curve_index} has an invalid point count.")
+        if isinstance(group, bool) or not isinstance(group, int):
+            raise ValueError(f"Curve {curve_index} has an invalid group index.")
+
+        if group not in groups:
+            groups[group] = []
+            group_order.append(group)
+        groups[group].append((first, first + count, curve_index))
+
+    def is_contiguous_partition(ranges, expected_end):
+        cursor = 0
+        for start, end, _ in sorted(ranges):
+            if start != cursor:
+                return False
+            cursor = end
+        return cursor == expected_end
+
+    global_ranges = [
+        (curve["first"], curve["first"] + curve["count"], index)
+        for index, curve in enumerate(curves)
+    ]
+    if (
+        point_count(curves) == total_points
+        and is_contiguous_partition(global_ranges, total_points)
+    ):
+        return [curve["first"] for curve in curves]
+
+    group_spans = {
+        group: max(end for _, end, _ in ranges)
+        for group, ranges in groups.items()
+    }
+    for group, ranges in groups.items():
+        if not is_contiguous_partition(ranges, group_spans[group]):
+            raise ValueError(
+                f"Curve point ranges in group {group} are not a contiguous "
+                "non-overlapping range starting at zero."
+            )
+
+    if sum(group_spans.values()) != total_points:
+        raise ValueError(
+            "Curve point ranges do not account for all OBJ vertices."
+        )
+
+    group_bases = {}
+    point_base = 0
+    for group in group_order:
+        group_bases[group] = point_base
+        point_base += group_spans[group]
+
+    return [
+        group_bases[curve["group"]] + curve["first"]
+        for curve in curves
+    ]
+
+
 def validate(curves: list[dict]) -> None:
     """
     Validate curve metadata.

@@ -4,7 +4,7 @@ bl_info = {
     "version": (1, 0, 0),
     "blender": (5, 2, 0),
     "location": "File > Import",
-    "description": "Import Unreal Engine Groom assets as native Blender Hair Curves",
+    "description": "Import Unreal Engine Grooms as Blender Hair Curves or particle hair",
     "category": "Import-Export",
 }
 

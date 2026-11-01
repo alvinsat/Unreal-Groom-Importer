@@ -17,6 +17,7 @@ unreal_groom_importer/
 ├── obj_parser.py
 ├── json_parser.py
 ├── hair_builder.py
+├── particle_builder.py
 ├── asset_loader.py
 │
 └── assets/
@@ -27,7 +28,7 @@ unreal_groom_importer/
 
 # Overview
 
-The importer reconstructs native Blender Hair Curves from the OBJ and JSON files exported by the Unreal Groom Exporter plugin.
+The importer reconstructs either native Blender Hair Curves or Blender particle hair from the OBJ and JSON files exported by the Unreal Groom Exporter plugin.
 
 The import pipeline is intentionally split into small modules, with each module responsible for a single task.
 
@@ -52,16 +53,11 @@ Curve Metadata
    │
    ▼
 
-Hair Builder
+Import Operator
    │
-   ▼
-Native Hair Curves
+   ├── Hair Curves ──► Asset Loader ──► Finished Groom
    │
-   ▼
-Asset Loader
-   │
-   ▼
-Finished Groom
+   └── Particle Hair ────────────────► Combable Groom
 ```
 
 ---
@@ -93,9 +89,8 @@ Responsibilities
 - Read selected OBJ path
 - Locate matching JSON file
 - Call parsers
-- Build Hair Curves
-- Assign Geometry Nodes
-- Assign material
+- Build the selected hair representation
+- Configure Hair Curves assets when applicable
 - Report errors
 
 This module acts as the controller for the entire import process.
@@ -161,6 +156,31 @@ Responsibilities
 - Disable Hair Dynamics
 
 This module contains all Blender Hair Curves API interaction.
+
+---
+
+## particle_builder.py
+
+Creates a legacy Blender particle system with editable parent hairs for
+particle-edit combing.
+
+Responsibilities
+
+- Select a deterministic, group-balanced subset of source strands
+- Reduce each source strand to the configured key count while retaining its
+  root, tip, and source vertices that best preserve polyline length
+- Create a point-only emitter with one vertex per guide root
+- Store root UV and groom group as point attributes on the emitter
+- Assign guide key positions and arc-length times with
+  `ParticleHairKey.co_object_set()`
+- Rebuild Blender's path and child caches after key assignment
+
+The default import uses up to 100,000 parent guides, 20 segments per guide, and
+no generated children. This keeps one guide per source strand for typical
+assets. Reducing the guide limit or segment count trades source fidelity for
+editing performance. Simple children are procedural paths derived from parent
+guides, not copies of omitted source strands. Interpolated children require
+emitter faces, so they are not used.
 
 ---
 
@@ -282,12 +302,14 @@ Fields
 
 | Field | Description |
 |--------|-------------|
-| first | First vertex index inside OBJ |
+| first | First point index in the OBJ, either global or local to its group |
 | count | Number of vertices in strand |
 | group | Unreal Hair Group |
 | uv | Root surface UV |
 
-The importer validates the JSON before any Blender objects are created.
+The importer resolves group-local point offsets into the OBJ's concatenated
+point stream. It validates that the ranges form a complete, non-overlapping
+partition before building either hair representation.
 
 ---
 
@@ -302,6 +324,37 @@ bpy.ops.object.curves_empty_hair_add()
 Blender requires an active mesh object before this operator can execute.
 
 If no mesh is selected, the importer displays a user-friendly error instead of Blender's internal operator error.
+
+---
+
+# Particle Hair Import
+
+The import dialog offers **Hair Curves** (the default) and **Particle Hair**.
+Particle Hair uses the Blender 5.2 particle-system API and emits hair from
+vertices of a generated point-only mesh. `use_emit_random` is disabled so the
+particle roots correspond to the emitter vertices in order.
+
+When a mesh is selected, particle import builds temporary native Hair Curves,
+evaluates the same Geometry Nodes surface attachment as Hair Curves mode, and
+uses those evaluated point positions for particle guides. The temporary curve
+object and its data are removed after extraction. Both modes use the selected
+mesh's active UV map; MetaHuman meshes may name it `DiffuseUV` rather than
+`UVMap`. Without a selected mesh, guides use the imported OBJ positions
+directly.
+
+Particle systems require a uniform key count. The import dialog allows up to
+20 segments (21 keys). If a strand has more points than keys, a greedy vertex
+selection retains the endpoints and favors bends that preserve source
+polyline length. Key times are proportional to cumulative key length.
+
+The Blender 5.2 source implements child paths in `psys_thread_create_path()`
+and evaluates them with `psys_get_particle_on_path()`. Simple children derive
+their paths from parent guides, so they cannot reproduce arbitrary omitted
+source strands one-to-one. `ParticleHairKey.co_object_set()` uses Blender's
+object-space hair transform and sets the edited flag. After assigning keys,
+the importer enters and exits Particle Edit mode to rebuild evaluated guide
+and child path caches; without this, Blender can display stale default-length
+paths even when the key coordinates read back correctly.
 
 ---
 
@@ -330,7 +383,9 @@ Blender automatically creates all required point storage.
 
 # Position Copy
 
-Point positions are copied using
+Point positions are reordered by the resolved JSON point starts so each
+allocated curve receives the correct source strand, including grooms whose
+`first` values restart at zero for each group. They are copied using
 
 ```
 hair.position_data.foreach_set(

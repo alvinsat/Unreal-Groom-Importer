@@ -20,6 +20,8 @@ from os import name
 
 import bpy
 
+from .json_parser import curve_point_starts
+
 
 # ----------------------------------------------------------
 # Constants
@@ -56,13 +58,19 @@ def build_hair(
     bpy.types.Object
     """
 
+    if len(vertices) % 3:
+        raise ValueError("The OBJ vertex array must contain complete XYZ points.")
+    point_starts = curve_point_starts(
+        curves,
+        len(vertices) // 3,
+    )
     obj = _create_empty_hair(name)
 
     hair = obj.data
 
     _create_curves(hair, curves)
 
-    _write_positions(hair, vertices)
+    _write_positions(hair, vertices, curves, point_starts)
 
     _create_root_uv_attribute(hair, curves)
 
@@ -119,11 +127,17 @@ def _create_curves(hair, curves):
 # Positions
 # ----------------------------------------------------------
 
-def _write_positions(hair, vertices):
+def _write_positions(hair, vertices, curves, point_starts):
+    ordered_vertices = []
+
+    for curve, first in zip(curves, point_starts):
+        start = first * 3
+        end = start + curve["count"] * 3
+        ordered_vertices.extend(vertices[start:end])
 
     hair.position_data.foreach_set(
         "vector",
-        vertices,
+        ordered_vertices,
     )
 
     hair.update_tag()
