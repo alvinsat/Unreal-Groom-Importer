@@ -18,6 +18,8 @@ unreal_groom_importer/
 ├── json_parser.py
 ├── hair_builder.py
 ├── particle_builder.py
+├── group_visualizer.py
+├── group_visibility.py
 ├── asset_loader.py
 │
 └── assets/
@@ -70,7 +72,7 @@ Addon entry point.
 
 Responsibilities
 
-- Register operators
+- Register operators and the groom-group visibility panel
 - Register import menu
 - Unregister classes
 - Register Blender Extension metadata
@@ -91,6 +93,7 @@ Responsibilities
 - Call parsers
 - Build the selected hair representation
 - Configure Hair Curves assets when applicable
+- Add optional Particle Hair group visualization
 - Report errors
 
 This module acts as the controller for the entire import process.
@@ -161,19 +164,22 @@ This module contains all Blender Hair Curves API interaction.
 
 ## particle_builder.py
 
-Creates a legacy Blender particle system with editable parent hairs for
-particle-edit combing.
+Creates a parent guide-root mesh and one group-specific particle emitter object
+with editable parent hairs per groom group.
 
 Responsibilities
 
 - Select a deterministic, group-balanced subset of source strands
 - Reduce each source strand to the configured key count while retaining its
   root, tip, and source vertices that best preserve polyline length
-- Create a point-only emitter with one vertex per guide root
+- Create a parent point mesh with one vertex per guide root
 - Store root UV and groom group as point attributes on the emitter
+- Create a child emitter object and particle system per imported groom group
+  so each group's strands can be toggled independently
 - Assign guide key positions and arc-length times with
   `ParticleHairKey.co_object_set()`
 - Rebuild Blender's path and child caches after key assignment
+- Optionally add a Geometry Nodes preview with colored guide-root markers
 
 The default import uses up to 100,000 parent guides, 20 segments per guide, and
 no generated children. This keeps one guide per source strand for typical
@@ -183,6 +189,21 @@ guides, not copies of omitted source strands. Interpolated children require
 emitter faces, so they are not used. Their radius is set to 2% of the median
 imported guide length instead of Blender's fixed 0.2-unit default, keeping the
 added density in scale with the source groom.
+
+---
+
+## group_visualizer.py
+
+Adds an optional Geometry Nodes preview with a colored marker at each guide
+root. Marker colors are selected from the emitter's integer `group` attribute.
+
+---
+
+## group_visibility.py
+
+Adds the 3D Viewport **Groom Group Visibility** panel. Each imported group has
+its own child emitter, so the panel can toggle its particle-system modifier for
+viewport and render independently.
 
 ---
 
@@ -196,6 +217,7 @@ Responsibilities
 - Load material asset
 - Assign Geometry Nodes modifier
 - Assign material
+- Assign material slots to Particle Hair group emitters
 - Bind selected mesh
 - Set Surface UV attribute
 
@@ -332,9 +354,10 @@ If no mesh is selected, the importer displays a user-friendly error instead of B
 # Particle Hair Import
 
 The import dialog offers **Hair Curves** (the default) and **Particle Hair**.
-Particle Hair uses the Blender 5.2 particle-system API and emits hair from
-vertices of a generated point-only mesh. `use_emit_random` is disabled so the
-particle roots correspond to the emitter vertices in order.
+Particle Hair uses the Blender 5.2 particle-system API. A parent point mesh
+stores all guide roots and attributes; each group-specific child emitter is a
+point-only mesh containing that group's roots. `use_emit_random` is disabled so
+the particle roots correspond to their emitter vertices in order.
 
 When a mesh is selected, particle import builds temporary native Hair Curves,
 evaluates the same Geometry Nodes surface attachment as Hair Curves mode, and

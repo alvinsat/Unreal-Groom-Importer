@@ -18,6 +18,7 @@ apply the Unreal-to-Blender coordinate conversion.
 - Preserves root UV coordinates
 - Creates `surface_uv_coordinate` attribute
 - Creates `group` attribute
+- Provides per-group Particle Hair visibility controls
 - Automatically applies scale and orientation correction
 - Automatically loads the Geometry Nodes asset
 - Automatically assigns the hair material
@@ -60,6 +61,7 @@ The importer automatically:
 - Imports root UV data
 - Applies coordinate conversion
 - Loads the Geometry Nodes modifier and material for Hair Curves
+- Assigns the bundled material to Particle Hair
 
 The imported Hair Curves object is named after the imported file.
 
@@ -71,8 +73,18 @@ limit or segment count for faster editing. Simple children are optional
 procedural hairs, not copies of omitted source strands, so they cannot provide
 a one-to-one match. Their spread scales with the imported guides so adding
 children increases density without using Blender's much larger default spread.
-After importing, use **Particle Edit** mode and the **Comb** tool to groom the
-particle guides.
+Particle Hair uses the same bundled `UE_HairCurve` material as Hair Curves.
+After importing, select a group emitter object in the Outliner and enter
+**Particle Edit** mode to groom its guides with the **Comb** tool. Enable
+**Visualize Groom Groups** in the import options (off by default) to add colored
+markers at guide roots, with one color per group. The
+**Groom Group Preview** Geometry Nodes modifier can be hidden in the modifier
+stack when you no longer need the markers. Markers show imported guide groups;
+they do not label procedural child hairs individually. Each imported group has
+its own child emitter object so its strands can be shown or hidden independently.
+Select the main Particle Hair object, open the 3D Viewport sidebar with **N**,
+and use **Groom → Groom Group Visibility** to toggle viewport and render
+visibility for each group.
 
 ### Note
 

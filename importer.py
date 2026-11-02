@@ -3,7 +3,7 @@ from pathlib import Path
 import bpy
 
 from bpy.types import Operator
-from bpy.props import EnumProperty, IntProperty, StringProperty
+from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 from bpy_extras.io_utils import ImportHelper
 
 from .obj_parser import read_obj
@@ -14,7 +14,8 @@ from .json_parser import (
 )
 from .hair_builder import build_hair
 from .particle_builder import build_particle_hair
-from .asset_loader import setup_hair
+from .asset_loader import assign_particle_material, setup_hair
+from .group_visualizer import add_group_visualization
 
 
 def _selected_surface(context):
@@ -170,6 +171,15 @@ class IMPORT_OT_unreal_groom(
         max=20,
     )
 
+    particle_visualize_groups: BoolProperty(
+        name="Visualize Groom Groups",
+        description=(
+            "Add colored Geometry Nodes markers at guide roots, one color "
+            "per group"
+        ),
+        default=False,
+    )
+
     def draw(self, context):
         layout = self.layout
         layout.prop(self, "import_mode")
@@ -177,6 +187,7 @@ class IMPORT_OT_unreal_groom(
             layout.prop(self, "particle_guide_limit")
             layout.prop(self, "particle_hair_step")
             layout.prop(self, "particle_children")
+            layout.prop(self, "particle_visualize_groups")
             layout.label(
                 text="Defaults preserve source strands; lower guides/steps for speed."
             )
@@ -247,6 +258,9 @@ class IMPORT_OT_unreal_groom(
                     children_per_guide=self.particle_children,
                     context=context,
                 )
+                assign_particle_material(hair_object)
+                if self.particle_visualize_groups:
+                    add_group_visualization(hair_object)
                 self.report(
                     {"INFO"},
                     f"Imported {imported_guides:,} of {len(curves):,} "

@@ -83,8 +83,14 @@ def build_particle_hair(
 
     mesh = None
     obj = None
+    group_objects = []
+    group_meshes = []
     previous_active = context.view_layer.objects.active
     previous_selected = list(context.selected_objects)
+    guide_groups = {}
+    for guide in guide_data:
+        guide_groups.setdefault(guide[2]["group"], []).append(guide)
+
     try:
         mesh = bpy.data.meshes.new(f"{name} Roots")
         mesh.from_pydata([item[0] for item in guide_data], [], [])
@@ -92,86 +98,137 @@ def build_particle_hair(
         _create_root_attributes(mesh, guide_data)
 
         obj = bpy.data.objects.new(name, mesh)
+        obj["_ue_groom_group_ids"] = sorted(guide_groups)
         context.collection.objects.link(obj)
+        for group_id, group_guides in guide_groups.items():
+            group_mesh = bpy.data.meshes.new(
+                f"{name} Group {group_id} Roots"
+            )
+            group_meshes.append(group_mesh)
+            group_mesh.from_pydata(
+                [guide[0] for guide in group_guides],
+                [],
+                [],
+            )
+            group_mesh.update()
+            _create_root_attributes(group_mesh, group_guides)
+
+            group_obj = bpy.data.objects.new(
+                f"{name} Group {group_id}",
+                group_mesh,
+            )
+            group_obj["_ue_groom_group_id"] = group_id
+            context.collection.objects.link(group_obj)
+            group_obj.parent = obj
+            group_objects.append(group_obj)
+
+            for selected_obj in context.selected_objects:
+                selected_obj.select_set(False)
+            group_obj.select_set(True)
+            context.view_layer.objects.active = group_obj
+
+            bpy.ops.object.particle_system_add()
+            if len(group_obj.particle_systems) != 1:
+                raise RuntimeError("Blender did not create a particle system.")
+
+            particle_system = group_obj.particle_systems[-1]
+            particle_system.name = f"Groom Group {group_id}"
+            settings = particle_system.settings
+            settings.type = "HAIR"
+            settings.count = len(group_guides)
+            settings.emit_from = "VERT"
+            settings.use_emit_random = False
+            settings.hair_step = hair_step
+            path_step = max(3, math.ceil(math.log2(hair_step + 1)))
+            settings.display_step = max(settings.display_step, path_step)
+            settings.render_step = max(settings.render_step, path_step)
+            settings.child_type = "SIMPLE" if children_per_guide else "NONE"
+            settings.child_percent = children_per_guide
+            settings.rendered_child_count = children_per_guide
+            if children_per_guide:
+                settings.child_radius = _child_radius(group_guides)
+            particle_system.use_hair_dynamics = False
+
+            context.view_layer.update()
+            evaluated_obj = group_obj.evaluated_get(
+                context.evaluated_depsgraph_get()
+            )
+            evaluated_system = evaluated_obj.particle_systems[-1]
+            evaluated_particles = evaluated_system.particles
+            particle_modifier = next(
+                (
+                    modifier
+                    for modifier in evaluated_obj.modifiers
+                    if modifier.type == "PARTICLE_SYSTEM"
+                    and modifier.particle_system == evaluated_system
+                ),
+                None,
+            )
+            if particle_modifier is None:
+                raise RuntimeError("Blender did not create a particle modifier.")
+            if len(evaluated_particles) != len(group_guides):
+                raise RuntimeError(
+                    f"Blender generated an unexpected number of guides for "
+                    f"groom group {group_id}."
+                )
+
+            for particle, (root, offsets, _) in zip(
+                evaluated_particles,
+                group_guides,
+            ):
+                if len(particle.hair_keys) != len(offsets):
+                    raise RuntimeError(
+                        "Blender generated an unexpected number of hair keys."
+                    )
+                key_lengths = [
+                    math.dist(start, end)
+                    for start, end in zip(offsets, offsets[1:])
+                ]
+                total_length = sum(key_lengths)
+                elapsed = 0.0
+                for key_index, (key, offset) in enumerate(
+                    zip(particle.hair_keys, offsets)
+                ):
+                    position = tuple(
+                        root_component + offset_component
+                        for root_component, offset_component in zip(root, offset)
+                    )
+                    # This marks the system edited so Blender preserves imported keys.
+                    key.co_object_set(
+                        evaluated_obj,
+                        particle_modifier,
+                        particle,
+                        position,
+                    )
+                    if key_index:
+                        elapsed += key_lengths[key_index - 1]
+                    key.time = (
+                        elapsed / total_length
+                        if total_length
+                        else key_index / (len(offsets) - 1)
+                    )
+
+            # Rebuild this group's path and child caches from its edited keys.
+            context.view_layer.update()
+            bpy.ops.object.mode_set(mode="PARTICLE_EDIT")
+            bpy.ops.object.mode_set(mode="OBJECT")
+
         for selected_obj in context.selected_objects:
             selected_obj.select_set(False)
         obj.select_set(True)
         context.view_layer.objects.active = obj
-
-        bpy.ops.object.particle_system_add()
-        if not obj.particle_systems:
-            raise RuntimeError("Blender did not create a particle system.")
-
-        particle_system = obj.particle_systems[-1]
-        settings = particle_system.settings
-        settings.type = "HAIR"
-        settings.count = len(guide_data)
-        settings.emit_from = "VERT"
-        settings.use_emit_random = False
-        settings.hair_step = hair_step
-        path_step = max(3, math.ceil(math.log2(hair_step + 1)))
-        settings.display_step = max(settings.display_step, path_step)
-        settings.render_step = max(settings.render_step, path_step)
-        settings.child_type = "SIMPLE" if children_per_guide else "NONE"
-        settings.child_percent = children_per_guide
-        settings.rendered_child_count = children_per_guide
-        if children_per_guide:
-            settings.child_radius = _child_radius(guide_data)
-        particle_system.use_hair_dynamics = False
-
-        context.view_layer.update()
-        evaluated_obj = obj.evaluated_get(context.evaluated_depsgraph_get())
-        evaluated_particles = evaluated_obj.particle_systems[-1].particles
-        particle_modifier = next(
-            modifier
-            for modifier in evaluated_obj.modifiers
-            if modifier.type == "PARTICLE_SYSTEM"
-        )
-        if len(evaluated_particles) != len(guide_data):
-            raise RuntimeError(
-                "Blender generated an unexpected number of particle guides."
-            )
-
-        for particle, (root, offsets, _) in zip(evaluated_particles, guide_data):
-            if len(particle.hair_keys) != len(offsets):
-                raise RuntimeError(
-                    "Blender generated an unexpected number of hair keys."
-                )
-            key_lengths = [
-                math.dist(start, end)
-                for start, end in zip(offsets, offsets[1:])
-            ]
-            total_length = sum(key_lengths)
-            elapsed = 0.0
-            for key_index, (key, offset) in enumerate(
-                zip(particle.hair_keys, offsets)
-            ):
-                position = tuple(
-                    root_component + offset_component
-                    for root_component, offset_component in zip(root, offset)
-                )
-                # This marks the system edited so Blender preserves imported keys.
-                key.co_object_set(
-                    evaluated_obj,
-                    particle_modifier,
-                    particle,
-                    position,
-                )
-                if key_index:
-                    elapsed += key_lengths[key_index - 1]
-                key.time = (
-                    elapsed / total_length
-                    if total_length
-                    else key_index / (len(offsets) - 1)
-                )
-
-        # Rebuild Blender's path and child caches from the edited hair keys.
-        bpy.ops.object.mode_set(mode="PARTICLE_EDIT")
-        bpy.ops.object.mode_set(mode="OBJECT")
         context.view_layer.update()
     except Exception:
+        active_object = context.view_layer.objects.active
+        if active_object is not None and active_object.mode == "PARTICLE_EDIT":
+            bpy.ops.object.mode_set(mode="OBJECT")
+        for group_obj in group_objects:
+            bpy.data.objects.remove(group_obj, do_unlink=True)
         if obj is not None:
             bpy.data.objects.remove(obj, do_unlink=True)
+        for group_mesh in group_meshes:
+            if group_mesh.users == 0:
+                bpy.data.meshes.remove(group_mesh)
         if mesh is not None and mesh.users == 0:
             bpy.data.meshes.remove(mesh)
         for selected_obj in context.selected_objects:

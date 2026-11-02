@@ -11,6 +11,7 @@ bl_info = {
 import bpy
 
 from .importer import IMPORT_OT_unreal_groom
+from .group_visibility import VIEW3D_PT_unreal_groom_group_visibility
 
 
 # ----------------------------------------------------------
@@ -30,6 +31,7 @@ def menu_import(self, context):
 
 classes = (
     IMPORT_OT_unreal_groom,
+    VIEW3D_PT_unreal_groom_group_visibility,
 )
 
 

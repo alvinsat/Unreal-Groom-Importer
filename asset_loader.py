@@ -110,6 +110,41 @@ def assign_material(obj):
         curves.materials[0] = material
 
 
+def assign_particle_material(obj):
+    """Assign the bundled material to the groom and its group emitters."""
+    load_assets()
+    material = bpy.data.materials[MATERIAL_NAME]
+    particle_objects = [
+        obj,
+        *(
+            child
+            for child in obj.children
+            if "_ue_groom_group_id" in child
+        ),
+    ]
+
+    for particle_obj in particle_objects:
+        assign_material(particle_obj)
+        material_index = next(
+            (
+                index
+                for index, slot_material in enumerate(
+                    particle_obj.data.materials
+                )
+                if slot_material == material
+            ),
+            None,
+        )
+        if material_index is None:
+            raise RuntimeError(
+                f"Material '{MATERIAL_NAME}' is missing from "
+                f"'{particle_obj.name}'."
+            )
+
+        for particle_system in particle_obj.particle_systems:
+            particle_system.settings.material = material_index + 1
+
+
 # ----------------------------------------------------------
 # Surface
 # ----------------------------------------------------------
