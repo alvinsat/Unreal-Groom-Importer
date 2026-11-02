@@ -115,6 +115,8 @@ def build_particle_hair(
         settings.child_type = "SIMPLE" if children_per_guide else "NONE"
         settings.child_percent = children_per_guide
         settings.rendered_child_count = children_per_guide
+        if children_per_guide:
+            settings.child_radius = _child_radius(guide_data)
         particle_system.use_hair_dynamics = False
 
         context.view_layer.update()
@@ -288,6 +290,20 @@ def _resample_offsets(
         tuple(value - origin for value, origin in zip(point, root))
         for point in guide_points
     ]
+
+
+def _child_radius(guide_data) -> float:
+    lengths = sorted(
+        sum(math.dist(start, end) for start, end in zip(offsets, offsets[1:]))
+        for _, offsets, _ in guide_data
+    )
+    middle = len(lengths) // 2
+    median_length = (
+        lengths[middle]
+        if len(lengths) % 2
+        else (lengths[middle - 1] + lengths[middle]) / 2
+    )
+    return median_length * 0.02
 
 
 def _create_root_attributes(mesh, guide_data) -> None:

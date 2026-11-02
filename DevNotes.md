@@ -180,7 +180,9 @@ no generated children. This keeps one guide per source strand for typical
 assets. Reducing the guide limit or segment count trades source fidelity for
 editing performance. Simple children are procedural paths derived from parent
 guides, not copies of omitted source strands. Interpolated children require
-emitter faces, so they are not used.
+emitter faces, so they are not used. Their radius is set to 2% of the median
+imported guide length instead of Blender's fixed 0.2-unit default, keeping the
+added density in scale with the source groom.
 
 ---
 

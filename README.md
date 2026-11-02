@@ -69,7 +69,8 @@ strand, up to 100,000 guides, with 20 segments and no generated children. This
 preserves the source strand count and improves shape fidelity. Lower the guide
 limit or segment count for faster editing. Simple children are optional
 procedural hairs, not copies of omitted source strands, so they cannot provide
-a one-to-one match.
+a one-to-one match. Their spread scales with the imported guides so adding
+children increases density without using Blender's much larger default spread.
 After importing, use **Particle Edit** mode and the **Comb** tool to groom the
 particle guides.
 
