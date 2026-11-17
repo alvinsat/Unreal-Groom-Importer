@@ -96,6 +96,8 @@ transforms are applied to the exported positions and radii, not the source
 groom. Scale magnitudes must remain uniform because hair radius is scalar.
 It writes a same-name `.json` manifest containing each curve's groom group ID,
 guide/child flag, root UV, per-point radii, optional colors, and curve index.
+Finite negative source radii are preserved as-is rather than clamped; affected
+strands may render with pinched or zero-width points.
 Blender's Alembic format does not round-trip arbitrary Hair Curves attributes,
 so keep the `.abc` and `.json` together.
 The Blender-to-UE manual import action expects these transforms to already be

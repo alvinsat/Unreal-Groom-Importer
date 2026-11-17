@@ -83,11 +83,10 @@ def build_hair(
                 not isinstance(radius, (int, float))
                 or isinstance(radius, bool)
                 or not math.isfinite(radius)
-                or radius < 0.0
             ):
                 raise ValueError(
-                    f"Hair radius at point {index} must be finite and "
-                    f"non-negative; got {radius!r}."
+                    f"Hair radius at point {index} must be finite; "
+                    f"got {radius!r}."
                 )
     if point_colors is not None:
         point_count = len(vertices) // 3
@@ -350,10 +349,9 @@ def build_grouped_hair_from_curves(
         isinstance(radius, bool)
         or not isinstance(radius, (int, float))
         or not math.isfinite(radius)
-        or radius < 0.0
         for radius in point_radii
     ):
-        raise ValueError("Hair point radii must be finite and non-negative.")
+        raise ValueError("Hair point radii must be finite.")
 
     group_ids = sorted(grouped_indices)
     previous_active = context.view_layer.objects.active

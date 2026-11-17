@@ -261,7 +261,6 @@ def validate(curves: list[dict]) -> None:
                     isinstance(value, bool)
                     or not isinstance(value, (int, float))
                     or not math.isfinite(value)
-                    or value < 0.0
                     for value in radii
                 )
             ):

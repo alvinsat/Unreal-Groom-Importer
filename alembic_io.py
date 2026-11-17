@@ -423,7 +423,7 @@ def _collect_groom(
                 ]
                 curve_colors = colors[first:end] if colors is not None else None
                 if any(
-                    not math.isfinite(radius) or radius < 0.0
+                    not math.isfinite(radius)
                     for radius in curve_radii
                 ):
                     raise RuntimeError(
@@ -649,7 +649,7 @@ def _read_point_float_attribute(data, name):
     values = [0.0] * len(attribute.data)
     attribute.data.foreach_get("value", values)
     for index, value in enumerate(values):
-        if not math.isfinite(value) or value < 0.0:
+        if not math.isfinite(value):
             raise RuntimeError(
                 f"Hair Curves has invalid '{name}' value at point "
                 f"{index}: {value!r}."
