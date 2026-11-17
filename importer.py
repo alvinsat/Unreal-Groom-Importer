@@ -12,10 +12,17 @@ from .json_parser import (
     read_json,
     validate,
 )
-from .hair_builder import build_hair
+from .hair_builder import build_grouped_hair, build_hair
 from .particle_builder import build_particle_hair
-from .asset_loader import assign_particle_material, setup_hair
-from .group_visualizer import add_group_visualization
+from .asset_loader import (
+    assign_hair_shape_modifiers,
+    assign_particle_material,
+    setup_hair,
+)
+from .group_visualizer import (
+    add_curve_group_visualization,
+    add_group_visualization,
+)
 
 
 def _selected_surface(context):
@@ -55,6 +62,8 @@ def _particle_source_from_curves(
             vertices,
             curves,
             name=f"{name} Curve Source",
+            surface=surface,
+            context=context,
         )
         source_data = source_object.data
         setup_hair(
@@ -180,6 +189,34 @@ class IMPORT_OT_unreal_groom(
         default=False,
     )
 
+    hair_curve_guide_limit: IntProperty(
+        name="Maximum Guide Hairs",
+        description=(
+            "Reduce source strands to this many guides; children add "
+            "additional strands"
+        ),
+        default=100000,
+        min=1,
+        max=1000000,
+    )
+
+    hair_curve_children: IntProperty(
+        name="Children per Guide",
+        description=(
+            "Generate this many additional native Hair Curves per guide; "
+            "high counts use more memory"
+        ),
+        default=0,
+        min=0,
+        max=20,
+    )
+
+    hair_curve_visualize_groups: BoolProperty(
+        name="Visualize Groom Groups",
+        description="Show colored markers at the source guide roots",
+        default=False,
+    )
+
     def draw(self, context):
         layout = self.layout
         layout.prop(self, "import_mode")
@@ -190,6 +227,13 @@ class IMPORT_OT_unreal_groom(
             layout.prop(self, "particle_visualize_groups")
             layout.label(
                 text="Defaults preserve source strands; lower guides/steps for speed."
+            )
+        else:
+            layout.prop(self, "hair_curve_guide_limit")
+            layout.prop(self, "hair_curve_children")
+            layout.prop(self, "hair_curve_visualize_groups")
+            layout.label(
+                text="Children add strands; lower the guide limit to reduce count."
             )
 
     # ----------------------------------------------------------
@@ -269,29 +313,32 @@ class IMPORT_OT_unreal_groom(
                 )
                 return {"FINISHED"}
 
-            hair_object = build_hair(
+            hair_object, guide_count, child_count = build_grouped_hair(
                 vertices,
                 curves,
                 name=name,
-            )
-
-            #
-            # Setup assets
-            #
-
-            setup_hair(
-                hair_object,
+                guide_limit=self.hair_curve_guide_limit,
+                children_per_guide=self.hair_curve_children,
                 surface=surface,
-                uv_map=_surface_uv_map(surface) if surface is not None else "UVMap",
+                context=context,
             )
 
-            #
-            # Done
-            #
+            uv_map = _surface_uv_map(surface) if surface is not None else "UVMap"
+            for group_object in hair_object.children:
+                setup_hair(
+                    group_object,
+                    surface=surface,
+                    uv_map=uv_map,
+                )
+                assign_hair_shape_modifiers(group_object)
+                if self.hair_curve_visualize_groups:
+                    add_curve_group_visualization(group_object)
 
             self.report(
                 {"INFO"},
-                f"Imported {len(curves):,} curves"
+                f"Imported {guide_count:,} guide curves and "
+                f"{child_count:,} child curves in "
+                f"{len(hair_object.children)} groups"
             )
 
             return {"FINISHED"}

@@ -6,6 +6,7 @@ import math
 
 import bpy
 
+from .curve_selection import select_group_curves
 from .json_parser import curve_point_starts
 
 
@@ -37,7 +38,11 @@ def build_particle_hair(
     ):
         raise ValueError("Simple children per guide must be between 0 and 20.")
     point_starts = curve_point_starts(curves, len(vertices) // 3)
-    guides = _select_guides(curves, guide_limit)
+    guides = select_group_curves(
+        curves,
+        guide_limit,
+        guide_label="particle guide",
+    )
     if not 2 <= hair_step <= 20:
         raise ValueError("Particle hair segments must be between 2 and 20.")
 
@@ -244,70 +249,6 @@ def build_particle_hair(
         raise
 
     return obj, len(guides)
-
-
-def _select_guides(curves: list[dict], guide_limit: int) -> list[int]:
-    if not curves:
-        raise ValueError("The JSON contains no curves to import.")
-    if isinstance(guide_limit, bool) or not isinstance(guide_limit, int):
-        raise ValueError("The particle guide limit must be an integer.")
-    if guide_limit < 1:
-        raise ValueError("The particle guide limit must be at least 1.")
-
-    groups: dict[int, list[int]] = {}
-    for index, curve in enumerate(curves):
-        group = curve["group"]
-        if isinstance(group, bool) or not isinstance(group, int):
-            raise ValueError(f"Curve {index} has an invalid group index.")
-        groups.setdefault(group, []).append(index)
-
-    limit = min(guide_limit, len(curves))
-    if limit < len(groups):
-        raise ValueError(
-            "The particle guide limit must be at least the number of "
-            f"groom groups ({len(groups)})."
-        )
-
-    quotas = {group: 1 for group in groups}
-    remaining = limit - len(groups)
-    while remaining:
-        capacities = {
-            group: len(indices) - quotas[group]
-            for group, indices in groups.items()
-            if quotas[group] < len(indices)
-        }
-        total_capacity = sum(capacities.values())
-        if not total_capacity:
-            break
-
-        allocated = 0
-        remainders = []
-        for group, capacity in capacities.items():
-            share, remainder = divmod(remaining * capacity, total_capacity)
-            share = min(share, capacity)
-            quotas[group] += share
-            allocated += share
-            if quotas[group] < len(groups[group]):
-                remainders.append((remainder, group))
-        remaining -= allocated
-
-        if remaining:
-            for _, group in sorted(remainders, reverse=True):
-                if remaining == 0:
-                    break
-                if quotas[group] < len(groups[group]):
-                    quotas[group] += 1
-                    remaining -= 1
-
-    selected = []
-    for group, indices in groups.items():
-        quota = quotas[group]
-        for sample_index in range(quota):
-            source_index = int(
-                math.floor((sample_index + 0.5) * len(indices) / quota)
-            )
-            selected.append(indices[source_index])
-    return sorted(selected)
 
 
 def _resample_offsets(

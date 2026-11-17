@@ -2,8 +2,9 @@
 
 The Unreal Groom Importer Blender Extension imports Groom assets exported from Unreal Engine as native Blender Hair Curves or combable particle hair.
 
-Hair Curves mode reconstructs the original strand layout. Particle Hair mode
-creates combable guides from the same data and can optionally decimate them.
+Hair Curves mode retains native source strands up to the guide limit. Particle
+Hair mode creates combable guides from the same data and can optionally decimate
+them.
 When a mesh is selected, both modes attach to its active UV map. Both modes
 apply the Unreal-to-Blender coordinate conversion.
 
@@ -14,11 +15,11 @@ apply the Unreal-to-Blender coordinate conversion.
 - Import Unreal Groom OBJ files
 - Automatically reads the matching JSON metadata
 - Imports as native Blender Hair Curves or combable particle hair
-- Preserves full strand topology in Hair Curves mode
+- Preserves source topology for each selected Hair Curves guide
 - Preserves root UV coordinates
 - Creates `surface_uv_coordinate` attribute
 - Creates `group` attribute
-- Provides per-group Particle Hair visibility controls
+- Provides per-group visibility controls for Hair Curves and Particle Hair
 - Automatically applies scale and orientation correction
 - Automatically loads the Geometry Nodes asset
 - Automatically assigns the hair material
@@ -63,7 +64,26 @@ The importer automatically:
 - Loads the Geometry Nodes modifier and material for Hair Curves
 - Assigns the bundled material to Particle Hair
 
-The imported Hair Curves object is named after the imported file.
+Hair Curves imports create a parent controller named after the imported file,
+with one native Hair Curves child object per groom group. Select the controller
+and open the 3D Viewport sidebar with **N** to toggle each group's viewport and
+render visibility under **Groom → Groom Group Visibility**.
+
+Hair Curves mode offers a maximum guide count and a children-per-guide setting.
+Reducing the guide count downsamples source strands while retaining at least one
+guide per group; generated children are native curves that gently fan from each
+guide. These additional strands increase density but do not reconstruct omitted
+source strands. High child counts use more memory because the children are
+stored as actual curves. The optional **Visualize Groom Groups** setting adds
+colored markers at source-guide roots.
+Hair Curves keeps each selected source strand's original point topology rather
+than resampling it with Particle Hair's segment setting.
+Each Hair Curves group also receives a radius profile, subtle length-scaled
+noise, and a loose-wave stack. Waves fade in over the final 65% of each strand
+with a length-scaled radius, leaving roots smooth. The curl guide map uses
+stable source-guide indices so changing the child count does not change the
+imported guides. Blender's default Hair Dynamics modifier remains disabled and
+is separate from this shape stack.
 
 In the import file browser, choose **Import As** to select native Hair Curves
 or **Particle Hair**. Particle Hair defaults to one editable guide per source
@@ -77,14 +97,15 @@ Particle Hair uses the same bundled `UE_HairCurve` material as Hair Curves.
 After importing, select a group emitter object in the Outliner and enter
 **Particle Edit** mode to groom its guides with the **Comb** tool. Enable
 **Visualize Groom Groups** in the import options (off by default) to add colored
-markers at guide roots, with one color per group. The
+markers at guide roots, with one color per group. For Hair Curves, markers
+identify source guides and omit generated children. The
 **Groom Group Preview** Geometry Nodes modifier can be hidden in the modifier
 stack when you no longer need the markers. Markers show imported guide groups;
 they do not label procedural child hairs individually. Each imported group has
 its own child emitter object so its strands can be shown or hidden independently.
-Select the main Particle Hair object, open the 3D Viewport sidebar with **N**,
-and use **Groom → Groom Group Visibility** to toggle viewport and render
-visibility for each group.
+Select the main Particle Hair object or Hair Curves controller, open the 3D
+Viewport sidebar with **N**, and use **Groom → Groom Group Visibility** to
+toggle viewport and render visibility for each group.
 
 ### Note
 

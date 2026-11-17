@@ -1,10 +1,10 @@
-"""Viewport controls for particle groom group visibility."""
+"""Viewport and render controls for imported groom group visibility."""
 
 from bpy.types import Panel
 
 
 class VIEW3D_PT_unreal_groom_group_visibility(Panel):
-    """Show or hide particle hair by imported groom group."""
+    """Show or hide imported hair by groom group."""
 
     bl_label = "Groom Group Visibility"
     bl_idname = "VIEW3D_PT_unreal_groom_group_visibility"
@@ -17,7 +17,6 @@ class VIEW3D_PT_unreal_groom_group_visibility(Panel):
         obj = context.object
         return (
             obj is not None
-            and obj.type == "MESH"
             and "_ue_groom_group_ids" in obj
         )
 
@@ -36,27 +35,37 @@ class VIEW3D_PT_unreal_groom_group_visibility(Panel):
             )
             if group_obj is None:
                 layout.label(
-                    text=f"Group {group_id}: emitter missing",
-                    icon="ERROR",
-                )
-                continue
-
-            modifier = next(
-                (
-                    item
-                    for item in group_obj.modifiers
-                    if item.type == "PARTICLE_SYSTEM"
-                ),
-                None,
-            )
-            if modifier is None:
-                layout.label(
-                    text=f"Group {group_id}: modifier missing",
+                    text=f"Group {group_id}: object missing",
                     icon="ERROR",
                 )
                 continue
 
             row = layout.row(align=True)
             row.label(text=f"Group {group_id}")
-            row.prop(modifier, "show_viewport", text="Viewport")
-            row.prop(modifier, "show_render", text="Render")
+            if group_obj.type == "MESH":
+                modifier = next(
+                    (
+                        item
+                        for item in group_obj.modifiers
+                        if item.type == "PARTICLE_SYSTEM"
+                    ),
+                    None,
+                )
+                if modifier is None:
+                    row.label(text="Particle system missing", icon="ERROR")
+                    continue
+                row.prop(modifier, "show_viewport", text="Viewport")
+                row.prop(modifier, "show_render", text="Render")
+            else:
+                row.prop(
+                    group_obj,
+                    "hide_viewport",
+                    text="Viewport",
+                    invert_checkbox=True,
+                )
+                row.prop(
+                    group_obj,
+                    "hide_render",
+                    text="Render",
+                    invert_checkbox=True,
+                )

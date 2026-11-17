@@ -1,4 +1,4 @@
-"""Create a Geometry Nodes preview of particle groom groups."""
+"""Create Geometry Nodes previews for imported groom groups."""
 
 from __future__ import annotations
 
@@ -109,6 +109,100 @@ def add_group_visualization(obj: bpy.types.Object) -> bpy.types.Modifier:
         links.new(instance.outputs["Instances"], join_geometry.inputs["Geometry"])
 
     modifier = obj.modifiers.new(PREVIEW_MODIFIER_NAME, "NODES")
+    modifier.node_group = node_group
+    return modifier
+
+
+def add_curve_group_visualization(obj: bpy.types.Object) -> bpy.types.Modifier:
+    """Mark the roots of source guides on one native Hair Curves group object."""
+    if obj.type != "CURVES":
+        raise RuntimeError(
+            f"Hair group '{obj.name}' is not a native Hair Curves object."
+        )
+
+    group_id = obj.get("_ue_groom_group_id")
+    group_attribute = obj.data.attributes.get(GROUP_ATTRIBUTE)
+    child_attribute = obj.data.attributes.get("is_child")
+    if (
+        isinstance(group_id, bool)
+        or not isinstance(group_id, int)
+        or group_attribute is None
+        or group_attribute.domain != "CURVE"
+        or group_attribute.data_type != "INT"
+        or child_attribute is None
+        or child_attribute.domain != "CURVE"
+        or child_attribute.data_type != "INT"
+    ):
+        raise RuntimeError(
+            f"Hair group '{obj.name}' is missing its curve group/child attributes."
+        )
+
+    points = [0.0] * (len(obj.data.points) * 3)
+    obj.data.position_data.foreach_get("vector", points)
+    extents = [
+        max(points[axis::3]) - min(points[axis::3])
+        for axis in range(3)
+    ]
+    marker_radius = max(
+        math.sqrt(sum(extent * extent for extent in extents)) * 0.008,
+        0.0001,
+    )
+
+    group_material = _group_material(group_id)
+    node_group = bpy.data.node_groups.new(
+        f"{obj.name} Group Preview",
+        "GeometryNodeTree",
+    )
+    node_group.interface.new_socket(
+        name="Geometry",
+        in_out="INPUT",
+        socket_type="NodeSocketGeometry",
+    )
+    node_group.interface.new_socket(
+        name="Geometry",
+        in_out="OUTPUT",
+        socket_type="NodeSocketGeometry",
+    )
+
+    nodes = node_group.nodes
+    links = node_group.links
+    group_input = nodes.new("NodeGroupInput")
+    group_output = nodes.new("NodeGroupOutput")
+    separate = nodes.new("GeometryNodeSeparateGeometry")
+    separate.domain = "CURVE"
+    named_attribute = nodes.new("GeometryNodeInputNamedAttribute")
+    named_attribute.data_type = "INT"
+    named_attribute.inputs["Name"].default_value = "is_child"
+    compare = nodes.new("FunctionNodeCompare")
+    compare.data_type = "INT"
+    compare.operation = "EQUAL"
+    compare.inputs["B"].default_value = 0
+    curve_to_points = nodes.new("GeometryNodeCurveToPoints")
+    curve_to_points.mode = "COUNT"
+    curve_to_points.inputs["Count"].default_value = 1
+    ico_sphere = nodes.new("GeometryNodeMeshIcoSphere")
+    ico_sphere.inputs["Radius"].default_value = marker_radius
+    ico_sphere.inputs["Subdivisions"].default_value = 1
+    set_material = nodes.new("GeometryNodeSetMaterial")
+    set_material.inputs["Material"].default_value = group_material
+    instance = nodes.new("GeometryNodeInstanceOnPoints")
+    join_geometry = nodes.new("GeometryNodeJoinGeometry")
+
+    links.new(group_input.outputs["Geometry"], separate.inputs["Geometry"])
+    links.new(named_attribute.outputs["Attribute"], compare.inputs["A"])
+    links.new(compare.outputs["Result"], separate.inputs["Selection"])
+    links.new(separate.outputs["Selection"], curve_to_points.inputs["Curve"])
+    links.new(ico_sphere.outputs["Mesh"], set_material.inputs["Geometry"])
+    links.new(set_material.outputs["Geometry"], instance.inputs["Instance"])
+    links.new(curve_to_points.outputs["Points"], instance.inputs["Points"])
+    links.new(group_input.outputs["Geometry"], join_geometry.inputs["Geometry"])
+    links.new(instance.outputs["Instances"], join_geometry.inputs["Geometry"])
+    links.new(join_geometry.outputs["Geometry"], group_output.inputs["Geometry"])
+
+    modifier = obj.modifiers.new(
+        "Groom Group Preview",
+        "NODES",
+    )
     modifier.node_group = node_group
     return modifier
 
