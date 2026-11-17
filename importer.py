@@ -6,8 +6,9 @@ from bpy.types import Operator
 from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 from bpy_extras.io_utils import ImportHelper
 
-from .obj_parser import read_obj
+from .obj_parser import SCALE, read_obj
 from .json_parser import (
+    curve_point_attribute,
     json_from_obj,
     read_json,
     validate,
@@ -313,6 +314,19 @@ class IMPORT_OT_unreal_groom(
                 )
                 return {"FINISHED"}
 
+            point_count = len(vertices) // 3
+            point_radii = curve_point_attribute(
+                curves,
+                point_count,
+                "radius",
+            )
+            if point_radii is not None:
+                point_radii = [radius * SCALE for radius in point_radii]
+            point_colors = curve_point_attribute(
+                curves,
+                point_count,
+                "color",
+            )
             hair_object, guide_count, child_count = build_grouped_hair(
                 vertices,
                 curves,
@@ -321,6 +335,8 @@ class IMPORT_OT_unreal_groom(
                 children_per_guide=self.hair_curve_children,
                 surface=surface,
                 context=context,
+                point_radii=point_radii,
+                point_colors=point_colors,
             )
 
             uv_map = _surface_uv_map(surface) if surface is not None else "UVMap"

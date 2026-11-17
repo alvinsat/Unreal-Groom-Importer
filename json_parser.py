@@ -7,6 +7,7 @@ curve information required to build Blender Hair Curves.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 import json
 
@@ -172,6 +173,40 @@ def curve_point_starts(
     ]
 
 
+def curve_point_attribute(
+    curves: list[dict],
+    total_points: int,
+    attribute_name: str,
+) -> list | None:
+    """Flatten an optional per-curve point attribute into OBJ point order."""
+    has_attribute = [attribute_name in curve for curve in curves]
+    if not any(has_attribute):
+        return None
+    if not all(has_attribute):
+        raise ValueError(
+            f"Curve metadata has inconsistent '{attribute_name}' data."
+        )
+
+    starts = curve_point_starts(curves, total_points)
+    if attribute_name == "radius":
+        values = [0.0] * total_points
+        for curve, start in zip(curves, starts):
+            curve_values = curve[attribute_name]
+            values[start:start + curve["count"]] = curve_values
+        return values
+
+    if attribute_name == "color":
+        values = [(0.0, 0.0, 0.0)] * total_points
+        for curve, start in zip(curves, starts):
+            curve_values = curve[attribute_name]
+            values[start:start + curve["count"]] = [
+                tuple(color) for color in curve_values
+            ]
+        return values
+
+    raise ValueError(f"Unsupported point attribute '{attribute_name}'.")
+
+
 def validate(curves: list[dict]) -> None:
     """
     Validate curve metadata.
@@ -199,7 +234,66 @@ def validate(curves: list[dict]) -> None:
                 f"{', '.join(sorted(missing))}"
             )
 
-        if len(curve["uv"]) != 2:
+        if (
+            not isinstance(curve["uv"], (list, tuple))
+            or len(curve["uv"]) != 2
+            or any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                for value in curve["uv"]
+            )
+        ):
             raise ValueError(
                 f"Curve {index} has an invalid UV."
+            )
+
+        count = curve["count"]
+        if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+            raise ValueError(f"Curve {index} has an invalid point count.")
+
+        if "radius" in curve:
+            radii = curve["radius"]
+            if (
+                not isinstance(radii, list)
+                or len(radii) != count
+                or any(
+                    isinstance(value, bool)
+                    or not isinstance(value, (int, float))
+                    or not math.isfinite(value)
+                    or value < 0.0
+                    for value in radii
+                )
+            ):
+                raise ValueError(
+                    f"Curve {index} has invalid per-point radii."
+                )
+
+        if "color" in curve:
+            colors = curve["color"]
+            if (
+                not isinstance(colors, list)
+                or len(colors) != count
+                or any(
+                    not isinstance(color, (list, tuple))
+                    or len(color) != 3
+                    or any(
+                        isinstance(value, bool)
+                        or not isinstance(value, (int, float))
+                        or not math.isfinite(value)
+                        or value < 0.0
+                        for value in color
+                    )
+                    for color in colors
+                )
+            ):
+                raise ValueError(
+                    f"Curve {index} has invalid per-point colors."
+                )
+
+    for attribute_name in ("radius", "color"):
+        has_attribute = [attribute_name in curve for curve in curves]
+        if any(has_attribute) and not all(has_attribute):
+            raise ValueError(
+                f"Curve metadata has inconsistent '{attribute_name}' data."
             )

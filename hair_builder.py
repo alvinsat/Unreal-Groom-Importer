@@ -32,6 +32,7 @@ from .json_parser import curve_point_starts
 OBJECT_NAME = "UE Groom"
 
 ROOT_UV_ATTRIBUTE = "surface_uv_coordinate"
+COLOR_ATTRIBUTE = "ue_groom_color"
 GROUP_ATTRIBUTE = "group"
 CHILD_ATTRIBUTE = "is_child"
 CURVE_ID_ATTRIBUTE = "id"
@@ -48,6 +49,9 @@ def build_hair(
     name="Hair",
     surface=None,
     context=None,
+    point_radii: list[float] | None = None,
+    point_colors: list[tuple[float, float, float]] | None = None,
+    allow_unbound: bool = False,
 ) -> bpy.types.Object:
     """
     Create a Blender Hair Curves object.
@@ -67,6 +71,47 @@ def build_hair(
 
     if len(vertices) % 3:
         raise ValueError("The OBJ vertex array must contain complete XYZ points.")
+    if point_radii is not None:
+        point_count = len(vertices) // 3
+        if len(point_radii) != point_count:
+            raise ValueError(
+                f"Hair radius count ({len(point_radii)}) does not match "
+                f"point count ({point_count})."
+            )
+        for index, radius in enumerate(point_radii):
+            if (
+                not isinstance(radius, (int, float))
+                or isinstance(radius, bool)
+                or not math.isfinite(radius)
+                or radius < 0.0
+            ):
+                raise ValueError(
+                    f"Hair radius at point {index} must be finite and "
+                    f"non-negative; got {radius!r}."
+                )
+    if point_colors is not None:
+        point_count = len(vertices) // 3
+        if len(point_colors) != point_count:
+            raise ValueError(
+                f"Hair color count ({len(point_colors)}) does not match "
+                f"point count ({point_count})."
+            )
+        for index, color in enumerate(point_colors):
+            if (
+                not isinstance(color, (list, tuple))
+                or len(color) != 3
+                or any(
+                    isinstance(value, bool)
+                    or not isinstance(value, (int, float))
+                    or not math.isfinite(value)
+                    or value < 0.0
+                    for value in color
+                )
+            ):
+                raise ValueError(
+                    f"Hair color at point {index} must contain three finite, "
+                    "non-negative values."
+                )
     point_starts = curve_point_starts(
         curves,
         len(vertices) // 3,
@@ -74,13 +119,22 @@ def build_hair(
     if context is None:
         context = bpy.context
 
-    obj = _create_empty_hair(name, surface=surface, context=context)
+    obj = _create_empty_hair(
+        name,
+        surface=surface,
+        context=context,
+        allow_unbound=allow_unbound,
+    )
 
     hair = obj.data
 
     _create_curves(hair, curves)
 
     _write_positions(hair, vertices, curves, point_starts)
+    if point_radii is not None:
+        _write_radii(hair, point_radii)
+    if point_colors is not None:
+        _write_colors(hair, point_colors)
 
     _create_root_uv_attribute(hair, curves)
 
@@ -102,6 +156,8 @@ def build_grouped_hair(
     children_per_guide: int = 0,
     surface=None,
     context=None,
+    point_radii: list[float] | None = None,
+    point_colors: list[tuple[float, float, float]] | None = None,
 ) -> tuple[bpy.types.Object, int, int]:
     """Build a parent controller with one native Hair Curves object per group."""
     if context is None:
@@ -116,7 +172,17 @@ def build_grouped_hair(
     if len(vertices) % 3:
         raise ValueError("The OBJ vertex array must contain complete XYZ points.")
 
-    point_starts = curve_point_starts(curves, len(vertices) // 3)
+    total_points = len(vertices) // 3
+    point_starts = curve_point_starts(curves, total_points)
+    for attribute_name, values in (
+        ("radius", point_radii),
+        ("color", point_colors),
+    ):
+        if values is not None and len(values) != total_points:
+            raise ValueError(
+                f"Hair {attribute_name} count ({len(values)}) does not match "
+                f"point count ({total_points})."
+            )
     guide_indices = select_group_curves(
         curves,
         guide_limit,
@@ -150,8 +216,18 @@ def build_grouped_hair(
         ]
         if any(not math.isfinite(value) for point in points for value in point):
             raise ValueError(f"Curve {curve_index} contains a non-finite point.")
+        radii = (
+            point_radii[first:first + count]
+            if point_radii is not None
+            else None
+        )
+        colors = (
+            point_colors[first:first + count]
+            if point_colors is not None
+            else None
+        )
         grouped_guides.setdefault(curve["group"], []).append(
-            (curve_index, points, curve)
+            (curve_index, points, curve, radii, colors)
         )
 
     group_ids = sorted(grouped_guides)
@@ -181,7 +257,13 @@ def build_grouped_hair(
         child_count = 0
         for group_id in group_ids:
             group_guides = grouped_guides[group_id]
-            group_vertices, group_curves, generated_children = (
+            (
+                group_vertices,
+                group_curves,
+                generated_children,
+                group_radii,
+                group_colors,
+            ) = (
                 _pack_group_curves(group_guides, children_per_guide)
             )
             child_count += generated_children
@@ -191,6 +273,8 @@ def build_grouped_hair(
                 name=f"{name} Group {group_id}",
                 surface=surface,
                 context=context,
+                point_radii=group_radii,
+                point_colors=group_colors,
             )
             group_obj["_ue_groom_group_id"] = group_id
             group_obj["_ue_groom_guide_count"] = len(group_guides)
@@ -217,13 +301,160 @@ def build_grouped_hair(
     return root, len(guide_indices), child_count
 
 
+def build_grouped_hair_from_curves(
+    vertices: list[float],
+    curves: list[dict],
+    point_radii: list[float],
+    name: str = "Hair",
+    context=None,
+    point_colors: list[tuple[float, float, float]] | None = None,
+) -> tuple[bpy.types.Object, int, int]:
+    """Rebuild grouped Hair Curves without resampling or generating children."""
+    if context is None:
+        context = bpy.context
+    if len(vertices) % 3:
+        raise ValueError("Hair vertices must contain complete XYZ points.")
+    point_starts = curve_point_starts(curves, len(vertices) // 3)
+    if len(point_radii) != len(vertices) // 3:
+        raise ValueError("Hair point radii do not match the point count.")
+    if point_colors is not None and len(point_colors) != len(vertices) // 3:
+        raise ValueError("Hair point colors do not match the point count.")
+
+    grouped_indices = {}
+    for curve_index, curve in enumerate(curves):
+        count = curve["count"]
+        if count < 2:
+            raise ValueError(
+                f"Curve {curve_index} has fewer than two points."
+            )
+        uv = curve["uv"]
+        if (
+            not isinstance(uv, (list, tuple))
+            or len(uv) != 2
+            or any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                for value in uv
+            )
+        ):
+            raise ValueError(f"Curve {curve_index} has an invalid root UV.")
+        is_child = curve.get(CHILD_ATTRIBUTE, 0)
+        if is_child not in (0, 1, False, True):
+            raise ValueError(f"Curve {curve_index} has an invalid child flag.")
+        grouped_indices.setdefault(curve["group"], []).append(curve_index)
+
+    if any(not math.isfinite(value) for value in vertices):
+        raise ValueError("Hair vertices must be finite.")
+    if any(
+        isinstance(radius, bool)
+        or not isinstance(radius, (int, float))
+        or not math.isfinite(radius)
+        or radius < 0.0
+        for radius in point_radii
+    ):
+        raise ValueError("Hair point radii must be finite and non-negative.")
+
+    group_ids = sorted(grouped_indices)
+    previous_active = context.view_layer.objects.active
+    previous_selected = list(context.selected_objects)
+    root = None
+    group_objects = []
+    try:
+        root = bpy.data.objects.new(name, None)
+        root.empty_display_type = "PLAIN_AXES"
+        root["_ue_groom_group_ids"] = group_ids
+        root["_ue_groom_guide_count"] = sum(
+            not curve.get(CHILD_ATTRIBUTE, 0)
+            for curve in curves
+        )
+        root["_ue_groom_children_per_guide"] = 0
+        context.collection.objects.link(root)
+
+        child_count = 0
+        for group_id in group_ids:
+            group_vertices = []
+            group_radii = []
+            group_colors = []
+            group_curves = []
+            for curve_index in grouped_indices[group_id]:
+                source_curve = curves[curve_index]
+                first = point_starts[curve_index]
+                count = source_curve["count"]
+                curve = dict(source_curve)
+                curve["first"] = len(group_vertices)
+                group_curves.append(curve)
+                group_vertices.extend(
+                    vertices[point_index * 3:(point_index + 1) * 3]
+                    for point_index in range(first, first + count)
+                )
+                group_radii.extend(point_radii[first:first + count])
+                if point_colors is not None:
+                    group_colors.extend(point_colors[first:first + count])
+
+            group_vertices = [
+                value
+                for point in group_vertices
+                for value in point
+            ]
+            guides = sum(
+                not curve.get(CHILD_ATTRIBUTE, 0)
+                for curve in group_curves
+            )
+            children = len(group_curves) - guides
+            group_obj = build_hair(
+                group_vertices,
+                group_curves,
+                name=f"{name} Group {group_id}",
+                context=context,
+                point_radii=group_radii,
+                point_colors=group_colors if point_colors is not None else None,
+                allow_unbound=True,
+            )
+            group_obj["_ue_groom_group_id"] = group_id
+            group_obj["_ue_groom_guide_count"] = guides
+            group_obj["_ue_groom_child_count"] = children
+            group_obj.parent = root
+            group_objects.append(group_obj)
+            child_count += children
+
+        for selected_obj in context.selected_objects:
+            selected_obj.select_set(False)
+        root.select_set(True)
+        context.view_layer.objects.active = root
+        context.view_layer.update()
+    except Exception:
+        for group_obj in group_objects:
+            data = group_obj.data
+            bpy.data.objects.remove(group_obj, do_unlink=True)
+            if data.users == 0:
+                bpy.data.hair_curves.remove(data)
+        if root is not None:
+            bpy.data.objects.remove(root, do_unlink=True)
+        _restore_selection(context, previous_active, previous_selected)
+        raise
+
+    return root, root["_ue_groom_guide_count"], child_count
+
+
 # ----------------------------------------------------------
 # Hair Object
 # ----------------------------------------------------------
 
-def _create_empty_hair(name, surface=None, context=None):
+def _create_empty_hair(
+    name,
+    surface=None,
+    context=None,
+    allow_unbound=False,
+):
     if context is None:
         context = bpy.context
+
+    if surface is None and allow_unbound:
+        hair = bpy.data.hair_curves.new(name)
+        obj = bpy.data.objects.new(name, hair)
+        context.collection.objects.link(obj)
+        return obj
 
     if surface is None:
         surface = next(
@@ -281,6 +512,35 @@ def _write_positions(hair, vertices, curves, point_starts):
     )
 
     hair.update_tag()
+
+
+def _write_radii(hair, radii):
+    attribute = hair.attributes.get("radius")
+    if attribute is None:
+        attribute = hair.attributes.new(
+            "radius",
+            type="FLOAT",
+            domain="POINT",
+        )
+    if attribute.domain != "POINT" or attribute.data_type != "FLOAT":
+        raise RuntimeError("Hair radius must be a point float attribute.")
+    attribute.data.foreach_set("value", radii)
+
+
+def _write_colors(hair, colors):
+    attribute = hair.attributes.get(COLOR_ATTRIBUTE)
+    if attribute is None:
+        attribute = hair.attributes.new(
+            COLOR_ATTRIBUTE,
+            type="FLOAT_COLOR",
+            domain="POINT",
+        )
+    if attribute.domain != "POINT" or attribute.data_type != "FLOAT_COLOR":
+        raise RuntimeError("Hair color must be a point float color attribute.")
+    rgba_values = []
+    for red, green, blue in colors:
+        rgba_values.extend((red, green, blue, 1.0))
+    attribute.data.foreach_set("color", rgba_values)
 
 
 # ----------------------------------------------------------
@@ -386,16 +646,26 @@ def _disable_hair_dynamics(obj):
 def _pack_group_curves(group_guides, children_per_guide):
     lengths = [
         sum(math.dist(start, end) for start, end in zip(points, points[1:]))
-        for _, points, _ in group_guides
+        for _, points, *_ in group_guides
     ]
     spread = median(lengths) * 0.02 if lengths else 0.0
     guide_vertices = []
     guide_curves = []
+    guide_radii = []
+    guide_colors = []
     child_vertices = []
     child_curves = []
+    child_radii = []
+    child_colors = []
     generated_children = 0
 
-    for guide_index, (curve_index, points, curve) in enumerate(group_guides):
+    for guide_index, (
+        curve_index,
+        points,
+        curve,
+        curve_radii,
+        curve_colors,
+    ) in enumerate(group_guides):
         guide_curve = dict(curve)
         guide_curve["first"] = len(guide_vertices) // 3
         guide_curve["count"] = len(points)
@@ -408,6 +678,10 @@ def _pack_group_curves(group_guides, children_per_guide):
             for point in points
             for component in point
         )
+        if curve_radii is not None:
+            guide_radii.extend(curve_radii)
+        if curve_colors is not None:
+            guide_colors.extend(curve_colors)
 
         for child_index in range(children_per_guide):
             child = _make_child_curve(
@@ -431,6 +705,10 @@ def _pack_group_curves(group_guides, children_per_guide):
                 for point in child
                 for component in point
             )
+            if curve_radii is not None:
+                child_radii.extend(curve_radii)
+            if curve_colors is not None:
+                child_colors.extend(curve_colors)
             generated_children += 1
 
     guide_point_count = len(guide_vertices) // 3
@@ -441,6 +719,8 @@ def _pack_group_curves(group_guides, children_per_guide):
         guide_vertices + child_vertices,
         guide_curves + child_curves,
         generated_children,
+        guide_radii + child_radii if guide_radii else None,
+        guide_colors + child_colors if guide_colors else None,
     )
 
 

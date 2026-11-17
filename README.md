@@ -15,8 +15,10 @@ apply the Unreal-to-Blender coordinate conversion.
 - Import Unreal Groom OBJ files
 - Automatically reads the matching JSON metadata
 - Imports as native Blender Hair Curves or combable particle hair
+- Round-trips grouped Hair Curves through Alembic with a matching JSON manifest
 - Preserves source topology for each selected Hair Curves guide
 - Preserves root UV coordinates
+- Preserves per-point strand radii and colors when the source JSON includes them
 - Creates `surface_uv_coordinate` attribute
 - Creates `group` attribute
 - Provides per-group visibility controls for Hair Curves and Particle Hair
@@ -84,6 +86,25 @@ with a length-scaled radius, leaving roots smooth. The curl guide map uses
 stable source-guide indices so changing the child count does not change the
 imported guides. Blender's default Hair Dynamics modifier remains disabled and
 is separate from this shape stack.
+
+To export a grouped Hair Curves groom, select its controller or one of its
+group objects and choose **File → Export → Unreal Groom Alembic (.abc)**. The
+export combines evaluated group geometry into one Alembic Hair Curves object
+and resamples any strand above Unreal's 255-control-point limit. The export
+dialog defaults to scale `(100, -100, 100)` and X rotation `90°`; these
+transforms are applied to the exported positions and radii, not the source
+groom. Scale magnitudes must remain uniform because hair radius is scalar.
+It writes a same-name `.json` manifest containing each curve's groom group ID,
+guide/child flag, root UV, per-point radii, optional colors, and curve index.
+Blender's Alembic format does not round-trip arbitrary Hair Curves attributes,
+so keep the `.abc` and `.json` together.
+The Blender-to-UE manual import action expects these transforms to already be
+baked into the Alembic and uses identity conversion in Unreal. If importing
+this file through Unreal's native Alembic dialog instead, use identity
+conversion there too; applying another scale or rotation will compound the
+export transform.
+Reimport both using **File → Import → Unreal Groom Alembic (.abc)** to restore
+one Hair Curves object per groom group without regenerating strands.
 
 In the import file browser, choose **Import As** to select native Hair Curves
 or **Particle Hair**. Particle Hair defaults to one editable guide per source
